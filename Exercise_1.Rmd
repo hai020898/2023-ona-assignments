@@ -1,0 +1,91 @@
+---
+title: "Exercise_1"
+output: html_document
+date: '2023-03-13'
+---
+# Network analysis on Linkedin
+
+This exercise aims at analyzing my connections on LinkedIn to understand the depth of my network and identify opportunities in the future.
+
+Let's load the required package for this analysis
+
+```{r}
+library(dplyr)
+library(igraph)
+library(tidyr)
+```
+
+# Loading the dataset
+
+Load the following dataset
+
+```{r}
+Connections = read.csv("Connections.csv")
+```
+
+# Cleaning the data
+
+```{r}
+#Drop rows with no First Name or Last Name
+df <- subset(Connections, First.Name != "" & Last.Name != "" & Company !="" )
+#Only keep the first letter of their last name
+df$Last.Name <- substr(df$Last.Name, 1, 1)
+# Create a new column for full names
+df$Full.Name <- paste(df$First.Name, df$Last.Name, sep = " ")
+# Only keep Full Name and company
+data <- select(df, Full.Name, Company)
+#Create an ID column for each connection
+data <- data %>% mutate(ID = row_number())
+```
+Let's see how many companies there are. I sort the company in order of frequency.
+
+```{r}
+#Count number of employer and total count
+company_counts <- data %>%
+  group_by(Company) %>%
+  summarize(total_count = n())%>%
+  arrange(desc(total_count))
+company_counts
+```
+
+We then filter out people who work for company whose total count is larger than 1
+
+```{r}
+companies_to_filter <- company_counts %>%
+  filter(total_count > 1) %>%
+  select(`Company`) %>%
+  pull()
+```
+
+# Create node
+```{r}
+# Create nodes data frame
+table1 <- data %>%
+  distinct(Full.Name, Company, ID) %>%
+  filter((`Company` %in% companies_to_filter))%>%
+  select(ID,label = Full.Name)
+```
+
+# Create edges
+
+```{r}
+# Create edges data frame
+table2 <- data %>%
+  inner_join(data, by = "Company") %>%
+  filter(Full.Name.x != Full.Name.y) %>%
+  select(Person1 = Full.Name.x, Person2 = Full.Name.y, Person1_ID =
+           ID.x, Person2_ID = ID.y)%>%
+  filter(Person1 < Person2)%>%
+  select(Person1_ID, Person2_ID)
+```
+
+# Create network graph using igraph
+```{r}
+g <- graph_from_data_frame(d = table2, directed = FALSE, vertices = table1)
+plot(g,
+     vertex.size = 5,
+     vertex.label.cex = 0.5,
+     edge.arrow.size = 0.8)
+```
+
+One problem I am having with this graph is that it is hard to identify the company cluster. In addition, the connection is not clear and visible to see, thus hard to derive insight from them.
