@@ -1,0 +1,122 @@
+---
+title: "Exercise_2"
+author: "Hai Nguyen"
+date: '2023-03-20'
+output: html_document
+---
+
+# Fakebook bus
+
+This exercise aims to justify the choice of a seat on the Fakebook bus
+
+```{r}
+library(igraph)
+```
+
+## Create a vector of nodes
+
+```{r}
+nodes <- c("1", "2", "3", "4", "5", "6", "A", "B", "C", "D")
+```
+
+## Create a matrix of edges
+
+
+```{r}
+edges <- matrix(c(
+  "1", "2",
+  "2", "A",
+  "3", "D",
+  "3", "B",
+  "3", "C",
+  "3", "5",
+  "3", "4",
+  "5", "6",
+  "5", "D",
+  "6", "D",
+  "6", "B",
+  "A", "B",
+  "A", "C",
+  "B", "D",
+  "B", "C",
+  "C", "D"
+), ncol = 2, byrow = TRUE)
+```
+
+## Create a graph object using the nodes and edges
+
+```{r}
+graph <- graph_from_edgelist(edges, directed = FALSE)
+# Plot the graph
+plot(graph)
+```
+
+## Degree centrality
+
+```{r}
+# Calculate degree centrality for each node
+degree_centrality <- degree(graph)
+
+# Get degree centrality for nodes A, B, C, and D
+A_degree <- degree_centrality["A"]
+B_degree <- degree_centrality["B"]
+C_degree <- degree_centrality["C"]
+D_degree <- degree_centrality["D"]
+
+# Print degree centrality for nodes A, B, C, and D
+cat("Degree centrality for node A:", A_degree, "\n")
+cat("Degree centrality for node B:", B_degree, "\n")
+cat("Degree centrality for node C:", C_degree, "\n")
+cat("Degree centrality for node D:", D_degree, "\n")
+```
+
+## Closeness centrality
+
+```{r}
+# Calculate closeness centrality for each node
+closeness_centrality <- closeness(graph)
+
+# Get closeness centrality for nodes A, B, C, and D
+A_closeness <- closeness_centrality["A"]
+B_closeness <- closeness_centrality["B"]
+C_closeness <- closeness_centrality["C"]
+D_closeness <- closeness_centrality["D"]
+
+# Print closeness centrality for nodes A, B, C, and D
+cat("Closeness centrality for node A:", A_closeness, "\n")
+cat("Closeness centrality for node B:", B_closeness, "\n")
+cat("Closeness centrality for node C:", C_closeness, "\n")
+cat("Closeness centrality for node D:", D_closeness, "\n")
+
+```
+
+## Betweenness centrality
+
+```{r}
+# Calculate betweenness centrality for each node
+betweenness_centrality <- betweenness(graph)
+
+# Get betweenness centrality for nodes A, B, C, and D
+A_betweenness <- betweenness_centrality["A"]
+B_betweenness <- betweenness_centrality["B"]
+C_betweenness <- betweenness_centrality["C"]
+D_betweenness <- betweenness_centrality["D"]
+
+# Print betweenness centrality for nodes A, B, C, and D
+cat("Betweenness centrality for node A:", A_betweenness, "\n")
+cat("Betweenness centrality for node B:", B_betweenness, "\n")
+cat("Betweenness centrality for node C:", C_betweenness, "\n")
+cat("Betweenness centrality for node D:", D_betweenness, "\n")
+```
+
+My seat of choice would be seat B.
+
+If the goal is to optimize for overall network connectivity: Seat B has a high degree centrality score of 5, and is connected to seats A, C, D, and 6, all of which have relatively high degree centrality scores themselves. Choosing seat B could help to connect different groups of seats and enhance overall network connectivity.
+
+If the goal is to optimize for closeness to other seats: Seat B has a relatively high closeness centrality score compared to other seats in the network, which indicates that it is located close to many other seats. Choosing seat B could help to facilitate communication with nearby seats and minimize travel time between them.
+
+If the goal is to optimize for facilitating communication between different groups of seats: Seat B has the highest betweenness centrality score in the network, which indicates that it is located on many shortest paths between pairs of seats. Choosing seat B could help to facilitate communication between different groups of seats by serving as a hub that connects them.
+
+If the goal is to optimize for maximizing the number of connections: Seat B is connected to five other seats, which is higher than the average number of connections for seats in this network. Choosing seat B could help to maximize the number of potential connections.
+
+Overall, it seems that seat B is a right candidate for a good seat. The only concern it might have is that it is located near the luggage area and could cause injuries if the bus driver suddenly hit the brake.
