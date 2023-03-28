@@ -1,0 +1,308 @@
+---
+title: "Exercise_3"
+author: "Hai Nguyen"
+date: '2023-03-28'
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(arrow)
+```
+
+## Load data
+
+Load the following data:
+  + applications from `app_data_sample.parquet`
+  + edges from `edges_sample.csv`
+
+```{r load-data}
+applications <- read_parquet("C:/Users/nguye/OneDrive/Documents/MMA/Winter 2023/Network analysis/672_project_data/app_data_sample.parquet",as_data_frame=TRUE)
+edges <- read_csv("C:/Users/nguye/OneDrive/Documents/MMA/Winter 2023/Network analysis/672_project_data/edges_sample.csv")
+
+applications
+edges
+```
+
+## Get gender for examiners
+
+We'll get gender based on the first name of the examiner, which is recorded in the field `examiner_name_first`. We'll use library `gender` for that, relying on a modified version of their own [example](https://cran.r-project.org/web/packages/gender/vignettes/predicting-gender.html).
+
+Note that there are over 2 million records in the applications table -- that's because there are many records for each examiner, as many as the number of applications that examiner worked on during this time frame. Our first step therefore is to get all *unique* names in a separate list `examiner_names`. We will then guess gender for each one and will join this table back to the original dataset. So, let's get names without repetition:
+
+```{r gender-1}
+library(gender)
+#install_genderdata_package() # only run this line the first time you use the package, to get data for it
+# get a list of first names without repetitions
+examiner_names <- applications %>% 
+  distinct(examiner_name_first)
+examiner_names
+```
+
+Now let's use function `gender()` as shown in the example for the package to attach a gender and probability to each name and put the results into the table `examiner_names_gender`
+
+```{r gender-2}
+# get a table of names and gender
+examiner_names_gender <- examiner_names %>% 
+  do(results = gender(.$examiner_name_first, method = "ssa")) %>% 
+  unnest(cols = c(results), keep_empty = TRUE) %>% 
+  select(
+    examiner_name_first = name,
+    gender,
+    proportion_female
+  )
+examiner_names_gender
+```
+
+Finally, let's join that table back to our original applications data and discard the temporary tables we have just created to reduce clutter in our environment.
+
+```{r gender-3}
+# remove extra colums from the gender table
+examiner_names_gender <- examiner_names_gender %>% 
+  select(examiner_name_first, gender)
+# joining gender back to the dataset
+applications <- applications %>% 
+  left_join(examiner_names_gender, by = "examiner_name_first")
+# cleaning up
+rm(examiner_names)
+rm(examiner_names_gender)
+gc()
+```
+
+
+## Guess the examiner's race
+
+We'll now use package `wru` to estimate likely race of an examiner. Just like with gender, we'll get a list of unique names first, only now we are using surnames.
+
+```{r race-1}
+library(wru)
+examiner_surnames <- applications %>% 
+  select(surname = examiner_name_last) %>% 
+  distinct()
+examiner_surnames
+```
+We'll follow the instructions for the package outlined here [https://github.com/kosukeimai/wru](https://github.com/kosukeimai/wru).
+
+```{r race-2}
+examiner_race <- predict_race(voter.file = examiner_surnames, surname.only = T) %>% 
+  as_tibble()
+examiner_race
+```
+
+As you can see, we get probabilities across five broad US Census categories: white, black, Hispanic, Asian and other. (Some of you may correctly point out that Hispanic is not a race category in the US Census, but these are the limitations of this package.)
+
+Our final step here is to pick the race category that has the highest probability for each last name and then join the table back to the main applications table. See this example for comparing values across columns: [https://www.tidyverse.org/blog/2020/04/dplyr-1-0-0-rowwise/](https://www.tidyverse.org/blog/2020/04/dplyr-1-0-0-rowwise/). And this one for `case_when()` function: [https://dplyr.tidyverse.org/reference/case_when.html](https://dplyr.tidyverse.org/reference/case_when.html).
+
+```{r race-3}
+examiner_race <- examiner_race %>% 
+  mutate(max_race_p = pmax(pred.asi, pred.bla, pred.his, pred.oth, pred.whi)) %>% 
+  mutate(race = case_when(
+    max_race_p == pred.asi ~ "Asian",
+    max_race_p == pred.bla ~ "black",
+    max_race_p == pred.his ~ "Hispanic",
+    max_race_p == pred.oth ~ "other",
+    max_race_p == pred.whi ~ "white",
+    TRUE ~ NA_character_
+  ))
+examiner_race
+```
+
+Let's join the data back to the applications table.
+
+```{r race-4}
+# removing extra columns
+examiner_race <- examiner_race %>% 
+  select(surname,race)
+applications <- applications %>% 
+  left_join(examiner_race, by = c("examiner_name_last" = "surname"))
+rm(examiner_race)
+rm(examiner_surnames)
+gc()
+```
+
+
+## Examiner's tenure 
+
+To figure out the timespan for which we observe each examiner in the applications data, let's find the first and the last observed date for each examiner. We'll first get examiner IDs and application dates in a separate table, for ease of manipulation. We'll keep examiner ID (the field `examiner_id`), and earliest and latest dates for each application (`filing_date` and `appl_status_date` respectively). We'll use functions in package `lubridate` to work with date and time values.
+
+```{r tenure-1}
+library(lubridate) # to work with dates
+examiner_dates <- applications %>% 
+  select(examiner_id, filing_date, appl_status_date) 
+examiner_dates
+```
+
+The dates look inconsistent in terms of formatting. Let's make them consistent. We'll create new variables `start_date` and `end_date`.
+
+```{r tenure-2}
+examiner_dates <- examiner_dates %>% 
+  mutate(start_date = ymd(filing_date), end_date = as_date(dmy_hms(appl_status_date)))
+```
+
+Let's now identify the earliest and the latest date for each examiner and calculate the difference in days, which is their tenure in the organization.
+
+```{r tenure-3}
+examiner_dates <- examiner_dates %>% 
+  group_by(examiner_id) %>% 
+  summarise(
+    earliest_date = min(start_date, na.rm = TRUE), 
+    latest_date = max(end_date, na.rm = TRUE),
+    tenure_days = interval(earliest_date, latest_date) %/% days(1)
+    ) %>% 
+  filter(year(latest_date)<2018)
+examiner_dates
+```
+
+Joining back to the applications data.
+
+```{r tenure-4}
+applications <- applications %>% 
+  left_join(examiner_dates, by = "examiner_id")
+rm(examiner_dates)
+gc()
+```
+
+## Examiner's workgroup
+
+Let's create workgroup for each examiner in the applications data
+
+```{r workgroups-1}
+applications$workgroups <- substr(applications$examiner_art_unit, 1, 3)
+
+```
+
+Count the number of examiners in each workgroup
+
+```{r workgroups-2}
+workgroups_count = applications %>%
+  distinct(examiner_id, workgroups) %>%
+  group_by(workgroups) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count)) 
+```
+
+We will choose the top 2 workgroups with the largest number of examiner, which is 179 and 216
+
+```{r workgroups-3}
+# Create a new table for applications with `workgroups` equal to 179
+workgroup_179 <- applications %>%
+  filter( workgroups == "179")
+
+workgroup_179 <- distinct(workgroup_179, examiner_id, .keep_all = TRUE)
+
+# Create a new table for applications with `workgroups` equal to 216
+workgroup_216 <- applications %>%
+  filter( workgroups == "216")
+
+workgroup_216 <- distinct(workgroup_216, examiner_id, .keep_all = TRUE)
+```
+
+We will examine the demography of both workgroup
+
+Workgroup 179:
+
+```{r workgroups-4}
+ggplot(workgroup_179, aes(x = race, fill = gender)) +
+  geom_bar(position = "dodge") +
+  xlab("Race") +
+  ylab("Count") +
+  ggtitle("Distribution of Gender and Race in Workgroup 179")
+
+table(workgroup_179$gender)
+table(workgroup_179$race)
+
+```
+
+```{r workgroups-5}
+ggplot(workgroup_216, aes(x = race, fill = gender)) +
+  geom_bar(position = "dodge") +
+  xlab("Race") +
+  ylab("Count") +
+  ggtitle("Distribution of Gender and Race in Workgroup 216")
+
+table(workgroup_216$gender)
+table(workgroup_216$race)
+
+```
+
+In terms of gender, both groups have more male than female. In addition, if we look at the composition of gender within a specific race, it is indicated that for both Asian and White, male examiners outnumber their female peers.
+
+In terms of race, Asian and White are the two dominating race in both workgroup. For 179, the number of white examiner is approximately 3.3 more than that of Asian examiner. Similarly, in 216, white examiners outnumber their Asian peers by 71 examiners. For both group, Black and Hispanic are underrepresented.
+
+## Network between examiner
+
+We need to create a node dataframe with the examiner ID
+
+```{r node}
+#Create the nodes dataframe
+nodes <- applications %>%
+  distinct(examiner_id) %>%
+  select(examiner_id)
+
+nodes
+```
+
+We then proceed to create a new edges dataframe by cleaning the original edges dataframe
+
+```{r edge}
+#Subset examiner_id and workgroup columns from applications
+examiner_workgroup <- subset(applications, select = c("examiner_id", "workgroups"))
+
+# Look up the workgroup corresponding to each ego_examiner_id in the examiner_workgroup dataframe
+edges$ego_examiner_workgroup <- examiner_workgroup$workgroups[match(edges$ego_examiner_id, examiner_workgroup$examiner_id)]
+
+# Look up the workgroup corresponding to each alter_examiner_id in the examiner_workgroup dataframe
+edges$alter_examiner_workgroup <- examiner_workgroup$workgroups[match(edges$alter_examiner_id, examiner_workgroup$examiner_id)]
+
+# Filter out observations where either ego_examiner_workgroup or alter_examiner_workgroup is NA
+edges_filtered <- edges[complete.cases(edges[, c("ego_examiner_id", "alter_examiner_id", "ego_examiner_workgroup", "alter_examiner_workgroup")]), ]
+
+#Create the edges dataframe
+
+edges_1 <- edges_filtered %>%
+  distinct(ego_examiner_id, alter_examiner_id) %>%
+  select(ego_examiner_id, alter_examiner_id)
+
+edges_1
+```
+
+Let's create a network graph between the examiners
+
+```{r network}
+library(igraph)
+
+# Create network graph
+g <- graph_from_data_frame(d = edges_1, directed = FALSE, vertices = nodes)
+```
+
+For the purpose of this project, I will measure degree centrality. With the large number of employees in the organization, the person with the most connections will be influential as their connection could help them in their projects. Looking from a project perspective, knowing a lot of people will give you an advantage.
+
+Let's calculate the degree centrality for all examiner_id
+
+```{r degree_centrality 1}
+# Calculate the degree centrality of each node (examiner ID)
+centrality <- degree(g, mode = "all", normalized = FALSE)
+
+# Combine the centrality scores and node IDs into a table
+centrality_table <- data.frame(examiner_id = V(g)$name, centrality = as.vector(centrality))
+centrality_table$examiner_id <- as.numeric(centrality_table$examiner_id)
+```
+
+Let's calculate the degree centrality for each examiner in group 179
+
+```{r degree_centrality 2}
+workgroup_179 <- left_join(workgroup_179, centrality_table, by = "examiner_id")
+workgroup_179 <- arrange(workgroup_179, desc(centrality))
+workgroup_179
+```
+
+Let's calculate the degree centrality for each examiner in group 216
+```{r degree_centrality 3}
+workgroup_216 <- left_join(workgroup_216, centrality_table, by = "examiner_id")
+workgroup_216 <- arrange(workgroup_216, desc(centrality))
+workgroup_216
+```
+
+In group 179, the top 10 examiners with the highest centrality score are all white, with 4 females and 6 males. This could be explained by the fact that white is the dominating race in the group, and subconsciously people would make connection with people with similar backgrounds, in this case, of white race. On the other hand, in group 216, the top 10 examiners with the highest centrality score is mostly minorities (6 Asians, 1 black). This is interesting as Asian is not the major race in the group. This could be due to the difference in the topic that each workgroup deal with, and the people with the highest centrality score are those that are good at these topics.
